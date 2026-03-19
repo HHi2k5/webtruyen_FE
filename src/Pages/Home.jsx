@@ -7,19 +7,7 @@ import { useAuth } from '../contexts/AuthContext.jsx';
 
 export default function Home() {
   const { user } = useAuth();
-  const [searchParams] = useSearchParams();
   const categories = api.listCategories();
-
-  const [q, setQ] = useState(searchParams.get('q') || '');
-  const [status, setStatus] = useState(searchParams.get('status') || '');
-  const [author, setAuthor] = useState('');
-  const [categoryId, setCategoryId] = useState(searchParams.get('categoryId') || '');
-  const [sortBy, setSortBy] = useState(searchParams.get('sortBy') || 'updatedAt');
-  const [order, setOrder] = useState(searchParams.get('order') || 'desc');
-  const [page, setPage] = useState(1);
-  const pageSize = 12;
-
-  const result = useMemo(() => api.listStories({ q, categoryId, status, author, sortBy, order, page, pageSize }), [q, categoryId, status, author, sortBy, order, page]);
 
   // Popular manga (top 6 by createdAt desc)
   const popularStories = useMemo(() => api.listStories({ sortBy: 'createdAt', order: 'desc', page: 1, pageSize: 6 }), []);
@@ -45,7 +33,7 @@ export default function Home() {
             <section className="section">
               <div className="section-header">
                 <h2>POPULAR MANGA</h2>
-                <Link to="/?sortBy=createdAt&order=desc" className="view-all">View All</Link>
+                <Link to="/search?sortBy=createdAt&order=desc" className="view-all">View All</Link>
               </div>
               <div className="story-grid">
                 {popularStories.items.map(s => <StoryCard key={s.id} s={s} />)}
@@ -56,46 +44,14 @@ export default function Home() {
             <section className="section">
               <div className="section-header">
                 <h2>LATEST RELEASES</h2>
-                <Link to="/?sortBy=updatedAt&order=desc" className="view-all">View All</Link>
+                <Link to="/search?sortBy=updatedAt&order=desc" className="view-all">View All</Link>
               </div>
               <div className="story-grid">
                 {latestStories.items.map(s => <StoryCard key={s.id} s={s} />)}
               </div>
             </section>
 
-            {/* Search Results or All Stories */}
-            {(q || categoryId || status) && (
-              <section className="section">
-                <div className="section-header">
-                  <h2>SEARCH RESULTS</h2>
-                </div>
-                <div className="filters">
-                  <input placeholder="Search mangas" value={q} onChange={e=>{setQ(e.target.value); setPage(1);}} />
-                  <select value={categoryId} onChange={e=>{setCategoryId(e.target.value); setPage(1);}}>
-                    <option value="">Category</option>
-                    {categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                  <select value={status} onChange={e=>{setStatus(e.target.value); setPage(1);}}>
-                    <option value="">Status</option>
-                    <option value="ongoing">Ongoing</option>
-                    <option value="completed">Completed</option>
-                  </select>
-                  <select value={sortBy} onChange={e=>setSortBy(e.target.value)}>
-                    <option value="updatedAt">Latest Updated</option>
-                    <option value="createdAt">Newly Added</option>
-                    <option value="title">Name A→Z</option>
-                  </select>
-                  <select value={order} onChange={e=>setOrder(e.target.value)}>
-                    <option value="desc">Descending</option>
-                    <option value="asc">Ascending</option>
-                  </select>
-                </div>
-                <div className="story-grid">
-                  {result.items.map(s => <StoryCard key={s.id} s={s} />)}
-                </div>
-                <Paginator total={result.total} page={result.page} pageSize={result.pageSize} onChange={setPage} />
-              </section>
-            )}
+            {/* Home page now relies solely on Popular and Latest. Search handles querying. */}
           </div>
 
           <aside className="sidebar">
@@ -128,7 +84,7 @@ export default function Home() {
               <h3>Genre</h3>
               <div className="category-list">
                 {categories.map(cat => (
-                  <Link key={cat.id} to={`/?categoryId=${cat.id}`} className="category-link">
+                  <Link key={cat.id} to={`/search?categoryId=${cat.id}`} className="category-link">
                     {cat.name}
                   </Link>
                 ))}
@@ -139,9 +95,9 @@ export default function Home() {
             <div className="sidebar-section">
               <h3>Browse</h3>
               <div className="quick-links">
-                <Link to="/?status=ongoing">Ongoing</Link>
-                <Link to="/?status=completed">Completed</Link>
-                <Link to="/?sortBy=updatedAt">Latest</Link>
+                <Link to="/search?status=ongoing">Ongoing</Link>
+                <Link to="/search?status=completed">Completed</Link>
+                <Link to="/search?sortBy=updatedAt">Latest</Link>
               </div>
             </div>
           </aside>

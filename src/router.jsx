@@ -5,6 +5,7 @@ import Layout from './components/Layout.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 
 import Home from './Pages/Home.jsx';
+import Search from './Pages/Search.jsx';
 import StoryDetail from './Pages/StoryDetail.jsx';
 import ChapterRead from './Pages/ChapterRead.jsx';
 
@@ -23,6 +24,7 @@ export default function Router() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Home />} />
+        <Route path="search" element={<Search />} />
         <Route path="story/:storyId" element={<StoryDetail />} />
         <Route path="story/:storyId/chapter/:chapterNumber" element={<ChapterRead />} />
 

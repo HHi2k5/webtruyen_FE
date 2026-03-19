@@ -9,12 +9,12 @@ export function getUserById(id) {
 export function login(email, password) {
   const db = getDb();
   const u = db.users.find(x => x.email === email && x.password === password);
-  if (!u) throw new Error('Email hoặc mật khẩu sai');
+  if (!u) throw new Error('Incorrect email or password');
   return u;
 }
 export function register({ name, email, password, role = 'user' }) {
   const db = getDb();
-  if (db.users.some(u => u.email === email)) throw new Error('Email đã tồn tại');
+  if (db.users.some(u => u.email === email)) throw new Error('Email already exists');
   const u = { id: uid(), name, email, password, role };
   db.users.push(u);
   setDb(db);
@@ -28,7 +28,12 @@ export function listUsers() {
 export function updateUser(id, data) {
   const db = getDb();
   const i = db.users.findIndex(u => u.id === id);
-  if (i < 0) throw new Error('Người dùng không tồn tại');
+  if (i < 0) throw new Error('User does not exist');
+  
+  if (data.email && db.users.some(u => u.email === data.email && u.id !== id)) {
+    throw new Error('Email already exists. Please choose a different email.');
+  }
+
   db.users[i] = { ...db.users[i], ...data };
   setDb(db);
   return db.users[i];
@@ -46,15 +51,15 @@ export function deleteUser(id) {
 export function listCategories() { return getDb().categories; }
 export function createCategory({ name, slug }) {
   const db = getDb();
-  if (db.categories.some(c => c.slug === slug)) throw new Error('Slug đã tồn tại');
+  if (db.categories.some(c => c.slug === slug)) throw new Error('Slug already exists');
   const cat = { id: uid(), name, slug };
   db.categories.push(cat); setDb(db); return cat;
 }
 export function updateCategory(id, data) {
   const db = getDb();
   const i = db.categories.findIndex(c => c.id === id);
-  if (i < 0) throw new Error('Không tìm thấy');
-  if (data.slug && db.categories.some(c => c.slug === data.slug && c.id !== id)) throw new Error('Slug đã tồn tại');
+  if (i < 0) throw new Error('Not found');
+  if (data.slug && db.categories.some(c => c.slug === data.slug && c.id !== id)) throw new Error('Slug already exists');
   db.categories[i] = { ...db.categories[i], ...data }; setDb(db); return db.categories[i];
 }
 export function deleteCategory(id) {
@@ -87,7 +92,7 @@ export function listStories({ q, categoryId, status, author, sortBy='updatedAt',
 export function getStory(storyId) {
   const db = getDb();
   const story = db.stories.find(s => s.id === storyId);
-  if (!story) throw new Error('Không tìm thấy truyện');
+  if (!story) throw new Error('Story not found');
   const cats = db.story_categories.filter(sc => sc.story_id === storyId).map(sc => db.categories.find(c => c.id === sc.category_id));
   return { ...story, categories: cats };
 }
@@ -100,7 +105,7 @@ export function createStory(data) {
 export function updateStory(id, data) {
   const db = getDb();
   const i = db.stories.findIndex(s => s.id === id);
-  if (i < 0) throw new Error('Không tìm thấy');
+  if (i < 0) throw new Error('Story not found');
   db.stories[i] = { ...db.stories[i], ...data, updatedAt: Date.now() };
   setDb(db); return db.stories[i];
 }
@@ -128,7 +133,14 @@ export function getUserBookmarks(userId) {
     if (!chapter) return null;
     const story = db.stories.find(s => s.id === chapter.story_id);
     if (!story) return null;
-    return { ...chapter, story };
+    
+    const storyChapters = db.chapters.filter(c => c.story_id === story.id);
+    let latestChapterNumber = null;
+    if (storyChapters.length > 0) {
+      latestChapterNumber = Math.max(...storyChapters.map(c => Number(c.chapter_number) || 0));
+    }
+    
+    return { ...chapter, story, latestChapterNumber };
   }).filter(Boolean);
   return chapters;
 }
@@ -173,13 +185,13 @@ export function listChapters(storyId, { page=1, pageSize=20, order='asc' } = {})
 export function getChapterByNumber(storyId, chapter_number) {
   const db = getDb();
   const ch = db.chapters.find(c => c.story_id === storyId && c.chapter_number === Number(chapter_number));
-  if (!ch) throw new Error('Không tìm thấy chương');
+  if (!ch) throw new Error('Chapter not found');
   return ch;
 }
 export function createChapter({ story_id, chapter_number, title, pages }) {
   const db = getDb();
   if (db.chapters.some(c => c.story_id === story_id && Number(c.chapter_number) === Number(chapter_number))) {
-    throw new Error('Chapter_number đã tồn tại cho truyện này');
+    throw new Error('Chapter number already exists for this story');
   }
   const ch = { id: uid(), story_id, chapter_number: Number(chapter_number), title, pages, createdAt: Date.now() };
   db.chapters.push(ch); setDb(db); return ch;
@@ -187,12 +199,12 @@ export function createChapter({ story_id, chapter_number, title, pages }) {
 export function updateChapter(id, data) {
   const db = getDb();
   const i = db.chapters.findIndex(c => c.id === id);
-  if (i < 0) throw new Error('Không tìm thấy chương');
+  if (i < 0) throw new Error('Chapter not found');
   // nếu đổi chapter_number, áp ràng buộc unique
   if (data.chapter_number != null) {
     const ch = db.chapters[i];
     if (db.chapters.some(c => c.story_id === ch.story_id && Number(c.chapter_number) === Number(data.chapter_number) && c.id !== id)) {
-      throw new Error('Chapter_number đã tồn tại cho truyện này');
+      throw new Error('Chapter number already exists for this story');
     }
   }
   db.chapters[i] = { ...db.chapters[i], ...data }; setDb(db); return db.chapters[i];
@@ -205,7 +217,6 @@ export function deleteChapter(id) {
   setDb(db);
 }
 
-// ===== COMMENTS =====
 export function listComments({ story_id, chapter_id }) {
   const db = getDb();
   let arr = db.comments;
@@ -213,15 +224,20 @@ export function listComments({ story_id, chapter_id }) {
   if (chapter_id) arr = arr.filter(c => c.chapter_id === chapter_id);
   return arr.sort((a,b)=>a.createdAt - b.createdAt);
 }
-export function createComment({ user_id, story_id, chapter_id, content }) {
+export function createComment({ user_id, story_id, chapter_id, parent_id, content }) {
   const db = getDb();
-  const cm = { id: uid(), user_id, story_id, chapter_id, content, createdAt: Date.now() };
+  const cm = { id: uid(), user_id, story_id, chapter_id, parent_id: parent_id || null, content, createdAt: Date.now() };
   db.comments.push(cm); setDb(db); return cm;
 }
 export function deleteComment(id, { requester }) {
   const db = getDb();
   const cm = db.comments.find(c => c.id === id);
   if (!cm) return;
-  if (requester.role !== 'admin' && requester.id !== cm.user_id) throw new Error('Không có quyền xoá');
-  db.comments = db.comments.filter(c => c.id !== id); setDb(db);
+  if (requester.role !== 'admin' && requester.id !== cm.user_id) throw new Error('Permission denied to delete');
+  
+  const idsToDelete = new Set([id]);
+  db.comments.forEach(c => { if (c.parent_id === id) idsToDelete.add(c.id); });
+  
+  db.comments = db.comments.filter(c => !idsToDelete.has(c.id)); 
+  setDb(db);
 }
