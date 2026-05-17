@@ -2,6 +2,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import * as api from '../services/apiClient.js';
+import Pagination from '../components/Pagination.jsx';
+import CommentSection from '../components/CommentSection.jsx';
 
 export default function StoryDetail() {
   const { storyId } = useParams();
@@ -9,50 +11,40 @@ export default function StoryDetail() {
   const { user } = useAuth();
   const [order, setOrder] = useState('desc');
 
-  const [story, setStory] = useState(() => api.getStory(storyId));
-  const categories = api.listCategories();
-  const chapterRes = useMemo(()=>api.listChapters(storyId, { page:1, pageSize: 200, order }), [storyId, order]);
+  const [story, setStory] = useState(null);
+  const [categories, setCategories] = useState([]);
+  const [chapterRes, setChapterRes] = useState({ items: [], total: 0 });
 
   useEffect(() => {
-    setStory(api.getStory(storyId));
+    api.listCategories().then(setCategories);
+  }, []);
+
+  useEffect(() => {
+    api.getStory(storyId).then(setStory);
   }, [storyId]);
 
-  const [commentContent, setCommentContent] = useState('');
-  const [replyingTo, setReplyingTo] = useState(null);
-  const [replyContent, setReplyContent] = useState('');
-  
-  const storyComments = useMemo(() => api.listComments({ story_id: storyId }), [storyId]);
-  const topLevelComments = useMemo(() => storyComments.filter(c => !c.parent_id), [storyComments]);
-  const getReplies = (parentId) => storyComments.filter(c => c.parent_id === parentId);
+  useEffect(() => {
+    api.listChapters(storyId, { page: 1, pageSize: 200, order }).then(setChapterRes);
+  }, [storyId, order]);
 
-  const addStoryComment = () => {
-    if (!user) return alert('Please login to comment');
-    if (!commentContent.trim()) return;
-    api.createComment({ user_id: user.id, story_id: storyId, chapter_id: null, content: commentContent.trim() });
-    setCommentContent('');
-  };
+  const [selectedCats, setSelectedCats] = useState([]);
+  useEffect(() => {
+    if (story && story.categories) setSelectedCats(story.categories.map(c=>c.id));
+  }, [story]);
 
-  const addReply = (parentId) => {
-    if (!user) return alert('Please login to reply');
-    if (!replyContent.trim()) return;
-    api.createComment({ user_id: user.id, story_id: storyId, chapter_id: null, parent_id: parentId, content: replyContent.trim() });
-    setReplyContent('');
-    setReplyingTo(null);
-  };
-
-  const removeStoryComment = (id) => {
-    try {
-      api.deleteComment(id, { requester: user ?? { role: 'guest' } });
-    } catch (e) { alert(e.message); }
-    setCommentContent(c => c); 
-  };
-
-  const [selectedCats, setSelectedCats] = useState(story.categories.map(c=>c.id));
-  const saveCats = () => {
+  const saveCats = async () => {
     if (user?.role !== 'admin') return;
-    api.setStoryCategories(storyId, selectedCats);
-    alert('Categories saved successfully');
+    try {
+      await api.setStoryCategories(storyId, selectedCats);
+      const updatedStory = await api.getStory(storyId);
+      setStory(updatedStory);
+      alert('Categories saved successfully');
+    } catch (e) {
+      alert('Failed to save categories: ' + e.message);
+    }
   };
+
+  if (!story) return <div style={{padding: '100px', textAlign: 'center', color: 'white'}}>Loading...</div>;
 
   return (
     <div className="story-detail-page animate-fade">
@@ -81,11 +73,12 @@ export default function StoryDetail() {
             <h1 style={{ fontSize: '36px', fontWeight: '800', margin: '0 0 12px 0', lineHeight: 1.2 }}>{story.title}</h1>
             <div style={{ display: 'flex', gap: '16px', color: 'var(--muted)', marginBottom: '20px', fontSize: '15px' }}>
               <span><strong style={{color:'white'}}>Author:</strong> {story.author}</span>
-              <span><strong style={{color:'white'}}>Status:</strong> {story.status === 'ongoing' ? 'Ongoing' : 'Completed'}</span>
+              <span><strong style={{color:'white'}}>Status:</strong> {story.status === 'ONGOING' || story.status === 'ongoing' ? 'Ongoing' : 'Completed'}</span>
+              <span><strong style={{color:'white'}}>Views:</strong> {story.views?.toLocaleString() || 0}</span>
             </div>
             
             <div className="tags" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '24px' }}>
-              {story.categories.map(c=><Link to={`/?categoryId=${c.id}`} key={c.id} className="tag badge" style={{ background: 'rgba(255,255,255,0.1)', color: 'white', border: 'none', fontSize: '13px', padding: '6px 14px' }}>{c.name}</Link>)}
+              {story.categories.map(c=><Link to={`/search?categoryId=${c.id}`} key={c.id} className="tag badge" style={{ background: 'rgba(255,255,255,0.1)', color: 'white', border: 'none', fontSize: '13px', padding: '6px 14px' }}>{c.name}</Link>)}
             </div>
 
             <div className="action-buttons" style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
@@ -101,10 +94,10 @@ export default function StoryDetail() {
               <h3 style={{ margin: '0 0 12px 0', fontSize: '18px', color: 'white' }}>Synopsis</h3>
               <p style={{ margin: 0 }}>{story.description}</p>
               {user?.role === 'admin' && (
-                <button className="btn btn-ghost" style={{ marginTop: '12px' }} onClick={()=>{
+                <button className="btn btn-ghost" style={{ marginTop: '12px' }} onClick={async ()=>{
                   const d = prompt('New Synopsis?', story.description);
                   if (d == null) return;
-                  const updated = api.updateStory(storyId, { description: d });
+                  const updated = await api.updateStory(storyId, { description: d });
                   setStory(updated);
                 }}>✎ Edit Synopsis</button>
               )}
@@ -171,83 +164,8 @@ export default function StoryDetail() {
             <div className="section-header" style={{ marginBottom: '16px' }}>
               <h2>Comments</h2>
             </div>
-            <div className="comments-container" style={{ background: 'var(--card-solid)', border: '1px solid var(--border)', borderRadius: '12px', padding: '20px' }}>
-              <div className="comment-box" style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
-                <textarea
-                  placeholder="What are your thoughts?"
-                  value={commentContent}
-                  onChange={e=>setCommentContent(e.target.value)}
-                  style={{ minHeight: '80px', resize: 'vertical' }}
-                />
-                <button className="btn btn-primary" onClick={addStoryComment} style={{ alignSelf: 'flex-end' }}>Post Comment</button>
-              </div>
-              
-              <ul className="comment-list" style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                {topLevelComments.length === 0 && <p style={{ color: 'var(--muted)', textAlign: 'center', fontStyle: 'italic' }}>No comments yet. Be the first!</p>}
-                
-                {topLevelComments.map(cm => (
-                  <li key={cm.id} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ display: 'flex', gap: '12px' }}>
-                      <div className="avatar" style={{ width: '40px', height: '40px', flexShrink: 0 }}>
-                        {(api.getUserById(cm.user_id)?.name || 'A').charAt(0).toUpperCase()}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div className="c-header" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                          <b style={{ color: 'white', fontSize: '15px' }}>{api.getUserById(cm.user_id)?.name || 'Anonymous'}</b>
-                          <small style={{ color: 'var(--muted)', fontSize: '12px' }}>{new Date(cm.createdAt).toLocaleString('en-US')}</small>
-                        </div>
-                        <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5, color: 'var(--text)', marginBottom: '8px' }}>{cm.content}</p>
-                        
-                        <div style={{ display: 'flex', gap: '12px' }}>
-                          <button className="btn-ghost" style={{ padding: 0, fontSize: '13px', color: 'var(--muted)', minHeight: 'auto', background: 'transparent' }} onClick={() => setReplyingTo(replyingTo === cm.id ? null : cm.id)}>
-                            {replyingTo === cm.id ? 'Cancel Reply' : 'Reply'}
-                          </button>
-                          {user && (user.role==='admin' || user.id===cm.user_id) && (
-                            <button className="btn-danger-ghost" style={{ padding: 0, fontSize: '13px', minHeight: 'auto', background: 'transparent' }} onClick={()=>removeStoryComment(cm.id)}>Delete</button>
-                          )}
-                        </div>
-                        
-                        {/* Reply Form */}
-                        {replyingTo === cm.id && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
-                            <textarea
-                              placeholder="Write a reply..."
-                              value={replyContent}
-                              onChange={e=>setReplyContent(e.target.value)}
-                              style={{ minHeight: '60px', resize: 'vertical', fontSize: '13px', padding: '8px 12px' }}
-                              autoFocus
-                            />
-                            <button className="btn btn-primary" onClick={() => addReply(cm.id)} style={{ alignSelf: 'flex-start', padding: '6px 12px', fontSize: '13px' }}>Reply</button>
-                          </div>
-                        )}
-                        
-                        {/* Nested Replies */}
-                        {getReplies(cm.id).length > 0 && (
-                          <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px', borderLeft: '2px solid rgba(255,255,255,0.1)', paddingLeft: '16px' }}>
-                            {getReplies(cm.id).map(reply => (
-                              <div key={reply.id} style={{ display: 'flex', gap: '10px' }}>
-                                <div className="avatar" style={{ width: '32px', height: '32px', flexShrink: 0, fontSize: '14px' }}>
-                                  {(api.getUserById(reply.user_id)?.name || 'A').charAt(0).toUpperCase()}
-                                </div>
-                                <div style={{ flex: 1 }}>
-                                  <div className="c-header" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
-                                    <b style={{ color: 'white', fontSize: '14px' }}>{api.getUserById(reply.user_id)?.name || 'Anonymous'}</b>
-                                    <small style={{ color: 'var(--muted)', fontSize: '11px' }}>{new Date(reply.createdAt).toLocaleString('en-US')}</small>
-                                    {user && (user.role==='admin' || user.id===reply.user_id) && (
-                                      <button className="btn-danger-ghost" style={{ padding: 0, fontSize: '12px', minHeight: 'auto', background: 'transparent', marginLeft: 'auto' }} onClick={()=>removeStoryComment(reply.id)}>Delete</button>
-                                    )}
-                                  </div>
-                                  <p style={{ margin: 0, fontSize: '13.5px', lineHeight: 1.5, color: 'var(--text)' }}>{reply.content}</p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+            <div className="comments-container" style={{ background: 'var(--card-solid)', border: '1px solid var(--border)', borderRadius: '12px', padding: '24px' }}>
+              <CommentSection storyId={storyId} />
             </div>
           </div>
           

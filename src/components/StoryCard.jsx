@@ -9,7 +9,7 @@ export default function StoryCard({ s }) {
       </div>
       <div className="meta">
         <h4 title={s.title}>{s.title}</h4>
-        <div className="sub">{s.author} • {s.status === 'ongoing' ? 'Ongoing' : 'Completed'}</div>
+        <div className="sub">{s.author} • {(s.status === 'ONGOING' || s.status === 'ongoing') ? 'Ongoing' : 'Completed'}</div>
       </div>
     </Link>
   );

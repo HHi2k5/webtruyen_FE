@@ -1,6 +1,4 @@
-
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { createToken, isTokenValid, decodeToken } from '../utils/jwt.js';
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import * as api from '../services/apiClient.js';
 
 const AuthCtx = createContext(null);
@@ -9,43 +7,74 @@ export const useAuth = () => useContext(AuthCtx);
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem('token') || null);
   const [user, setUser] = useState(() => {
-    if (!token || !isTokenValid(token)) return null;
-    const p = decodeToken(token);
-    if (!p || !p.userId) return null;
-    return api.getUserById(p.userId);
+    try {
+      return JSON.parse(localStorage.getItem('user')) || null;
+    } catch { return null; }
   });
 
+  const logout = useCallback(() => { 
+    setUser(null); 
+    setToken(null); 
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+  }, []);
+
   useEffect(() => {
-    if (token && isTokenValid(token)) localStorage.setItem('token', token);
+    api.setLogoutCallback(logout);
+  }, [logout]);
+
+  useEffect(() => {
+    if (token) localStorage.setItem('token', token);
     else localStorage.removeItem('token');
-  }, [token]);
 
-  const login = async ({ email, password }) => {
-    const u = api.login(email, password); // mock “API”
-    const t = createToken({ userId: u.id, role: u.role, ttlSec: 6 * 3600 });
+    if (user) localStorage.setItem('user', JSON.stringify(user));
+    else localStorage.removeItem('user');
+  }, [token, user]);
+
+  useEffect(() => {
+    if (token && user?.id) {
+      api.getUserById(user.id).then(u => {
+        if (u) setUser(u);
+      }).catch(e => {
+        if (e.response?.status === 401 || e.response?.status === 403) {
+          logout();
+        }
+      });
+    }
+  }, []);
+
+  const login = useCallback(async ({ email, password }) => {
+    const u = await api.login(email, password);
+    setToken(u.token);
     setUser(u);
-    setToken(t);
     return u;
-  };
+  }, []);
 
-  const register = async ({ name, email, password }) => {
-    const u = api.register({ name, email, password });
-    const t = createToken({ userId: u.id, role: u.role, ttlSec: 6 * 3600 });
-    setUser(u); setToken(t);
+  const register = useCallback(async ({ name, email, password }) => {
+    const u = await api.register({ name, email, password });
+    await login({ email, password });
     return u;
-  };
+  }, [login]);
 
-  const logout = () => { setUser(null); setToken(null); };
 
-  const updateUserInfo = (updates) => {
+  const updateUserInfo = useCallback(async (updates) => {
     if (!user) return null;
-    const updated = api.updateUser(user.id, updates);
-    setUser(updated);
+    const updated = await api.updateUser(user.id, updates);
+    setUser(prev => ({ ...prev, ...updated }));
     return updated;
-  };
+  }, [user]);
+
+  const contextValue = useMemo(() => ({
+    user,
+    token,
+    login,
+    register,
+    logout,
+    updateUserInfo
+  }), [user, token, login, register, logout, updateUserInfo]);
 
   return (
-    <AuthCtx.Provider value={{ user, token, login, register, logout, updateUserInfo }}>
+    <AuthCtx.Provider value={contextValue}>
       {children}
     </AuthCtx.Provider>
   );

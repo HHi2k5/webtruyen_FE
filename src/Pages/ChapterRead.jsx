@@ -1,71 +1,70 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import * as api from '../services/apiClient.js';
+import Pagination from '../components/Pagination.jsx';
+import CommentSection from '../components/CommentSection.jsx';
+import { saveToHistory } from '../utils/history.js';
 
 export default function ChapterRead() {
   const { storyId, chapterNumber } = useParams();
   const nav = useNavigate();
   const { user } = useAuth();
 
-  let story, ch, all;
-  try {
-    story = api.getStory(storyId);
-    ch = api.getChapterByNumber(storyId, chapterNumber);
-    all = api.listChapters(storyId, { order: 'asc' }).items;
-  } catch (e) {
-    return <div className="container" style={{padding: '100px 0', textAlign: 'center'}}><h2>Error: {e.message}</h2><Link to="/" className="btn btn-primary">Go Home</Link></div>;
-  }
+  const viewIncrementedRef = useRef({});
 
-  const idx = all.findIndex(x => x.id === ch.id);
-  const prev = all[idx-1], next = all[idx+1];
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    Promise.all([
+      api.getStory(storyId),
+      api.getChapterByNumber(storyId, chapterNumber),
+      api.listChapters(storyId, { order: 'asc', pageSize: 9999 })
+    ]).then(([storyRes, chRes, allRes]) => {
+      setData({ story: storyRes, ch: chRes, all: allRes.items });
+      
+      const key = `${storyId}-${chapterNumber}`;
+      if (user && !viewIncrementedRef.current[key]) {
+        viewIncrementedRef.current[key] = true;
+        api.incrementViews(storyId);
+      }
+    }).catch(e => setData({ error: e.message || 'Error loading chapter' }));
+  }, [storyId, chapterNumber]);
+
+  useEffect(() => {
+    if (data?.story && data?.ch) {
+      saveToHistory(data.story, data.ch);
+    }
+  }, [data]);
 
   const [bookmarked, setBookmarked] = useState(false);
   
   useEffect(() => {
-    if (user) setBookmarked(api.isBookmarked(user.id, ch.id));
-  }, [user, ch.id]);
+    if (user && data?.ch) {
+      api.isBookmarked(user.id, data.ch.id).then(setBookmarked);
+    }
+  }, [user, data]);
 
-  const toggleBookmark = () => {
+  const toggleBookmark = async () => {
     if (!user) return alert('Please login to bookmark');
-    api.toggleChapterBookmark(user.id, ch.id);
-    setBookmarked(!bookmarked);
-  };
-
-  const [content, setContent] = useState('');
-  const [replyingTo, setReplyingTo] = useState(null);
-  const [replyContent, setReplyContent] = useState('');
-
-  const chapterComments = useMemo(()=>api.listComments({ story_id: storyId, chapter_id: ch.id }), [storyId, ch.id]);
-  const topLevelComments = useMemo(() => chapterComments.filter(c => !c.parent_id), [chapterComments]);
-  const getReplies = (parentId) => chapterComments.filter(c => c.parent_id === parentId);
-
-  const addComment = () => {
-    if (!user) return alert('Please login to comment');
-    if (!content.trim()) return;
-    api.createComment({ user_id: user.id, story_id: storyId, chapter_id: ch.id, content: content.trim() });
-    setContent('');
-  };
-
-  const addReply = (parentId) => {
-    if (!user) return alert('Please login to reply');
-    if (!replyContent.trim()) return;
-    api.createComment({ user_id: user.id, story_id: storyId, chapter_id: ch.id, parent_id: parentId, content: replyContent.trim() });
-    setReplyContent('');
-    setReplyingTo(null);
-  };
-
-  const removeComment = (id) => {
     try {
-      api.deleteComment(id, { requester: user ?? { role: 'guest' } });
-    } catch (e) { alert(e.message); }
-    setContent(c => c);
+      await api.toggleChapterBookmark(user.id, data.ch.id);
+      setBookmarked(!bookmarked);
+    } catch (e) {
+      alert('Failed to update bookmark');
+    }
   };
 
   // Scroll to top when chapter changes
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [chapterNumber]);
+
+  if (!data) return <div style={{padding: '100px', textAlign: 'center', color: 'white'}}>Loading...</div>;
+  if (data.error) return <div className="container" style={{padding: '100px 0', textAlign: 'center'}}><h2>Error: {data.error}</h2><Link to="/" className="btn btn-primary">Go Home</Link></div>;
+  
+  const { story, ch, all } = data;
+  const idx = all.findIndex(x => x.chapter_number == ch.chapter_number);
+  const prev = all[idx-1], next = all[idx+1];
 
   return (
     <div className="reader-page bg-black" style={{ background: '#000', minHeight: '100vh', paddingBottom: '60px' }}>
@@ -137,78 +136,8 @@ export default function ChapterRead() {
       {/* Chapter Comments */}
       <div className="container" style={{ maxWidth: '900px', margin: '60px auto 0 auto' }}>
         <div className="comments-container" style={{ background: 'var(--card-solid)', border: '1px solid var(--border)', borderRadius: '12px', padding: '24px' }}>
-          <h3 style={{ margin: '0 0 20px 0', color: 'white' }}>Comments ({chapterComments.length})</h3>
-          <div className="comment-box" style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '32px' }}>
-            <textarea placeholder="Join the discussion for this chapter..." value={content} onChange={e=>setContent(e.target.value)} style={{ minHeight: '100px' }} />
-            <button className="btn btn-primary" onClick={addComment} style={{ alignSelf: 'flex-end' }}>Post Comment</button>
-          </div>
-
-          <ul className="comment-list" style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {topLevelComments.length === 0 && <p style={{ color: 'var(--muted)', textAlign: 'center', fontStyle: 'italic' }}>No comments yet. Be the first!</p>}
-            
-            {topLevelComments.map(cm => (
-              <li key={cm.id} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', gap: '16px' }}>
-                  <div className="avatar" style={{ width: '48px', height: '48px', flexShrink: 0 }}>
-                    {(api.getUserById(cm.user_id)?.name || 'A').charAt(0).toUpperCase()}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div className="c-header" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                      <b style={{ color: 'white', fontSize: '15px' }}>{api.getUserById(cm.user_id)?.name || 'Anonymous'}</b>
-                      <small style={{ color: 'var(--muted)', fontSize: '13px' }}>{new Date(cm.createdAt).toLocaleString('en-US')}</small>
-                    </div>
-                    <p style={{ margin: 0, fontSize: '15px', lineHeight: 1.6, color: 'var(--text)', marginBottom: '8px' }}>{cm.content}</p>
-                    
-                    <div style={{ display: 'flex', gap: '12px' }}>
-                      <button className="btn-ghost" style={{ padding: 0, fontSize: '14px', color: 'var(--muted)', minHeight: 'auto', background: 'transparent' }} onClick={() => setReplyingTo(replyingTo === cm.id ? null : cm.id)}>
-                        {replyingTo === cm.id ? 'Cancel Reply' : 'Reply'}
-                      </button>
-                      {user && (user.role==='admin' || user.id===cm.user_id) && (
-                        <button className="btn-danger-ghost" style={{ padding: 0, fontSize: '14px', minHeight: 'auto', background: 'transparent' }} onClick={()=>removeComment(cm.id)}>Delete</button>
-                      )}
-                    </div>
-                    
-                    {/* Reply Form */}
-                    {replyingTo === cm.id && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
-                        <textarea
-                          placeholder="Write a reply..."
-                          value={replyContent}
-                          onChange={e=>setReplyContent(e.target.value)}
-                          style={{ minHeight: '80px', resize: 'vertical', fontSize: '14px', padding: '12px' }}
-                          autoFocus
-                        />
-                        <button className="btn btn-primary" onClick={() => addReply(cm.id)} style={{ alignSelf: 'flex-start', padding: '8px 16px', fontSize: '14px' }}>Reply</button>
-                      </div>
-                    )}
-                    
-                    {/* Nested Replies */}
-                    {getReplies(cm.id).length > 0 && (
-                      <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '20px', borderLeft: '2px solid rgba(255,255,255,0.1)', paddingLeft: '20px' }}>
-                        {getReplies(cm.id).map(reply => (
-                          <div key={reply.id} style={{ display: 'flex', gap: '12px' }}>
-                            <div className="avatar" style={{ width: '36px', height: '36px', flexShrink: 0, fontSize: '15px' }}>
-                              {(api.getUserById(reply.user_id)?.name || 'A').charAt(0).toUpperCase()}
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <div className="c-header" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                <b style={{ color: 'white', fontSize: '14px' }}>{api.getUserById(reply.user_id)?.name || 'Anonymous'}</b>
-                                <small style={{ color: 'var(--muted)', fontSize: '12px' }}>{new Date(reply.createdAt).toLocaleString('en-US')}</small>
-                                {user && (user.role==='admin' || user.id===reply.user_id) && (
-                                  <button className="btn-danger-ghost" style={{ padding: 0, fontSize: '12px', minHeight: 'auto', background: 'transparent', marginLeft: 'auto' }} onClick={()=>removeComment(reply.id)}>Delete</button>
-                                )}
-                              </div>
-                              <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.6, color: 'var(--text)' }}>{reply.content}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <h3 style={{ margin: '0 0 20px 0', color: 'white' }}>Comments</h3>
+          <CommentSection storyId={storyId} chapterId={data.ch?.id} />
         </div>
       </div>
 

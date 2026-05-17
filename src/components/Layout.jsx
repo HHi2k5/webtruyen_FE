@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 import * as api from '../services/apiClient.js';
 
 export default function Layout() {
   const { user, logout } = useAuth();
+  const { lang, toggleLang, t } = useLanguage();
   const nav = useNavigate();
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
@@ -36,21 +38,21 @@ export default function Layout() {
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <input
                   type="text"
-                  placeholder="Search mangas, authors..."
+                  placeholder={t('searchPlaceholder')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  onInput={(e) => {
+                  onInput={async (e) => {
                     const q = e.target.value;
                     setSearchQuery(q);
                     if (q.trim()) {
-                      const results = api.listStories({ q, pageSize: 5 }).items;
-                      setSuggestions(results);
+                      const results = await api.listStories({ q, pageSize: 5 });
+                      setSuggestions(results.items);
                     } else {
                       setSuggestions([]);
                     }
                   }}
                 />
-                <button type="submit">Search</button>
+                <button type="submit">{t('search')}</button>
               </div>
               
               {suggestions.length > 0 && (
@@ -64,7 +66,45 @@ export default function Layout() {
               )}
             </form>
 
-            <div className="header-actions">
+            <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <button 
+                onClick={toggleLang}
+                style={{ 
+                  background: 'rgba(255,255,255,0.05)', 
+                  border: '1px solid var(--border)', 
+                  borderRadius: '20px', 
+                  padding: '4px 12px', 
+                  color: 'white', 
+                  fontSize: '12px', 
+                  fontWeight: '700', 
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                title={lang === 'EN' ? 'Switch to Vietnamese' : 'Chuyển sang tiếng Anh'}
+              >
+                <div style={{ 
+                  width: '24px', 
+                  height: '24px', 
+                  borderRadius: '50%', 
+                  overflow: 'hidden', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  border: '1px solid rgba(255,255,255,0.1)'
+                }}>
+                  <img 
+                    src={lang === 'EN' ? "https://flagcdn.com/w40/gb.png" : "https://flagcdn.com/w40/vn.png"} 
+                    alt={lang} 
+                    style={{ width: '140%', height: '100%', objectFit: 'cover' }}
+                  />
+                </div>
+                <span style={{ color: 'white', fontSize: '12px', fontWeight: '700' }}>{lang}</span>
+              </button>
               {user ? (
                 <>
                   <Link to="/profile" className="user-profile-btn" style={{ 
@@ -78,14 +118,14 @@ export default function Layout() {
                   onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; }} 
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.borderColor = 'var(--border)'; }}>
                     <div className="avatar" style={{width: 32, height: 32, fontSize: 14}}>{user.name.charAt(0).toUpperCase()}</div>
-                    <span style={{ fontWeight: 500, fontSize: '14px' }}>Hi, {user.name.split(' ')[0]}</span>
+                    <span style={{ fontWeight: 500, fontSize: '14px' }}>{t('hi')}, {user.name.split(' ')[0]}</span>
                   </Link>
-                  <button onClick={()=>{logout(); nav('/');}} className="btn btn-ghost" style={{ padding: '8px 16px' }}>Logout</button>
+                  <button onClick={()=>{logout(); nav('/');}} className="btn btn-ghost" style={{ padding: '8px 16px' }}>{t('logout')}</button>
                 </>
               ) : (
                 <>
-                  <Link to="/login" className="btn btn-ghost">Login</Link>
-                  <Link to="/register" className="btn btn-primary">Register</Link>
+                  <Link to="/login" className="btn btn-ghost">{t('login')}</Link>
+                  <Link to="/register" className="btn btn-primary">{t('register')}</Link>
                 </>
               )}
             </div>
@@ -94,10 +134,10 @@ export default function Layout() {
 
         <nav className="main-nav">
           <div className="container">
-            <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`}>HOME</Link>
-            <Link to="/search?sortBy=updatedAt" className={`nav-link ${isActive('sortBy', 'updatedAt') ? 'active' : ''}`}>LATEST</Link>
-            <Link to="/search?status=ongoing" className={`nav-link ${isActive('status', 'ongoing') ? 'active' : ''}`}>ONGOING</Link>
-            <Link to="/search?status=completed" className={`nav-link ${isActive('status', 'completed') ? 'active' : ''}`}>COMPLETED</Link>
+            <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`}>{t('home')}</Link>
+            <Link to="/search?sortBy=updatedAt" className={`nav-link ${isActive('sortBy', 'updatedAt') ? 'active' : ''}`}>{t('latest')}</Link>
+            <Link to="/search?status=ONGOING" className={`nav-link ${isActive('status', 'ONGOING') ? 'active' : ''}`}>{t('ongoing')}</Link>
+            <Link to="/search?status=COMPLETED" className={`nav-link ${isActive('status', 'COMPLETED') ? 'active' : ''}`}>{t('completed')}</Link>
             {user?.role === 'admin' && (
               <div className="admin-menu" onMouseLeave={() => setShowAdminMenu(false)} style={{ position: 'relative', display: 'inline-block' }}>
                 <button
@@ -105,7 +145,7 @@ export default function Layout() {
                   style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                   onClick={() => setShowAdminMenu(v => !v)}
                 >
-                  MANAGE 
+                  {t('manage')} 
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
                 {showAdminMenu && (
@@ -116,11 +156,11 @@ export default function Layout() {
                     zIndex: 1000,
                     minWidth: '160px'
                   }}>
-                    <Link to="/admin/stories" className="nav-link" style={{ display: 'block' }}>Stories</Link>
-                    <Link to="/admin/chapters" className="nav-link" style={{ display: 'block' }}>Chapters</Link>
-                    <Link to="/admin/categories" className="nav-link" style={{ display: 'block' }}>Categories</Link>
-                    <Link to="/admin/users" className="nav-link" style={{ display: 'block' }}>Users</Link>
-                    <Link to="/admin/comments" className="nav-link" style={{ display: 'block' }}>Comments</Link>
+                    <Link to="/admin/stories" className="nav-link" style={{ display: 'block' }}>{t('stories')}</Link>
+                    <Link to="/admin/chapters" className="nav-link" style={{ display: 'block' }}>{t('chapters')}</Link>
+                    <Link to="/admin/categories" className="nav-link" style={{ display: 'block' }}>{t('categories')}</Link>
+                    <Link to="/admin/users" className="nav-link" style={{ display: 'block' }}>{t('users')}</Link>
+                    <Link to="/admin/comments" className="nav-link" style={{ display: 'block' }}>{t('comments')}</Link>
                   </div>
                 )}
               </div>
@@ -141,13 +181,13 @@ export default function Layout() {
               <p>Your premium destination to read manga online for free. We provide high-quality chapters with a stunning reading experience.</p>
             </div>
             <div className="footer-section">
-              <h4>Quick Links</h4>
-              <Link to="/search?sortBy=updatedAt">Latest Releases</Link>
-              <Link to="/search?status=ongoing">Ongoing Series</Link>
-              <Link to="/search?status=completed">Completed Series</Link>
+              <h4>{t('quickLinks') || 'Quick Links'}</h4>
+              <Link to="/search?sortBy=updatedAt">{t('latestReleases')}</Link>
+              <Link to="/search?status=ONGOING">{t('ongoingSeries') || t('ongoing')}</Link>
+              <Link to="/search?status=COMPLETED">{t('completedSeries') || t('completed')}</Link>
             </div>
             <div className="footer-section">
-              <h4>Connect</h4>
+              <h4>{t('connect') || 'Connect'}</h4>
               <a href="#">Discord Community</a>
               <a href="#">Twitter / X</a>
               <a href="#">Contact Support</a>

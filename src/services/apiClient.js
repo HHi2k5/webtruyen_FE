@@ -1,243 +1,252 @@
-import { getDb, setDb } from './mockDb.js';
-import { uid } from '../utils/storage.js';
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: '/api'
+});
+
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers['Authorization'] = 'Bearer ' + token;
+  }
+  return config;
+});
+
+// Response interceptor for handling 401/403 (Unauthorized/Forbidden)
+let logoutCallback = null;
+export const setLogoutCallback = (cb) => { logoutCallback = cb; };
+
+api.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+      if (logoutCallback) logoutCallback();
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Mapping utilities to convert backend camelCase to frontend snake_case requirements
+const mapStory = s => s ? { ...s, coverUrl: s.coverImage || s.coverUrl } : s;
+const mapChapter = c => c ? { ...c, chapter_number: c.chapterNumber ?? c.chapter_number } : c;
+const mapComment = c => c ? { 
+  ...c, 
+  parent_id: c.parentId ?? c.parent_id,
+  chapter_id: c.chapterId ?? c.chapter_id,
+  story_id: (c.story?.id || c.storyId || c.story_id),
+  user_id: (c.user?.id || c.userId || c.user_id),
+  user: c.user || { id: c.userId || c.user_id, name: 'Anonymous' }
+} : c;
 
 // ===== USERS & AUTH =====
-export function getUserById(id) {
-  const db = getDb();
-  return db.users.find(u => u.id === id) || null;
+export async function login(email, password) {
+  const res = await api.post('/auth/login', { email, password });
+  return { ...res.data, token: res.data.token || res.data.jwt };
 }
-export function login(email, password) {
-  const db = getDb();
-  const u = db.users.find(x => x.email === email && x.password === password);
-  if (!u) throw new Error('Incorrect email or password');
-  return u;
+export async function register({ name, email, password, role = 'user' }) {
+  const res = await api.post('/auth/register', { name, email, password, role });
+  return res.data;
 }
-export function register({ name, email, password, role = 'user' }) {
-  const db = getDb();
-  if (db.users.some(u => u.email === email)) throw new Error('Email already exists');
-  const u = { id: uid(), name, email, password, role };
-  db.users.push(u);
-  setDb(db);
-  return u;
+export async function getUserById(id) {
+  const res = await api.get(`/users/${id}`);
+  return res.data;
 }
-
-// user management (admin)
-export function listUsers() {
-  return getDb().users;
-}
-export function updateUser(id, data) {
-  const db = getDb();
-  const i = db.users.findIndex(u => u.id === id);
-  if (i < 0) throw new Error('User does not exist');
-  
-  if (data.email && db.users.some(u => u.email === data.email && u.id !== id)) {
-    throw new Error('Email already exists. Please choose a different email.');
+export async function listUsers({ q, page=1, pageSize=10 } = {}) {
+  const params = { q, page, pageSize };
+  try {
+    const res = await api.get('/admin/users', { params });
+    if (res.data && res.data.items) {
+      return res.data;
+    }
+    // Fallback if backend hasn't updated yet
+    return { items: res.data || [], total: (res.data || []).length, page: 1, pageSize };
+  } catch (e) {
+    return { items: [], total: 0, page: 1, pageSize };
   }
-
-  db.users[i] = { ...db.users[i], ...data };
-  setDb(db);
-  return db.users[i];
 }
-export function deleteUser(id) {
-  const db = getDb();
-  db.users = db.users.filter(u => u.id !== id);
-  // optionally remove related data (bookmarks/comments)
-  db.chapter_bookmarks = db.chapter_bookmarks.filter(bm => bm.user_id !== id);
-  db.comments = db.comments.filter(c => c.user_id !== id);
-  setDb(db);
+export async function updateUser(id, data) {
+  const res = await api.put(`/users/${id}`, data);
+  return res.data;
+}
+export async function deleteUser(id) {
+  const res = await api.delete(`/admin/users/${id}`);
+  return res.data;
 }
 
 // ===== CATEGORIES =====
-export function listCategories() { return getDb().categories; }
-export function createCategory({ name, slug }) {
-  const db = getDb();
-  if (db.categories.some(c => c.slug === slug)) throw new Error('Slug already exists');
-  const cat = { id: uid(), name, slug };
-  db.categories.push(cat); setDb(db); return cat;
+export async function listCategories() {
+  try {
+    const res = await api.get('/categories');
+    return res.data || [];
+  } catch (e) { return []; }
 }
-export function updateCategory(id, data) {
-  const db = getDb();
-  const i = db.categories.findIndex(c => c.id === id);
-  if (i < 0) throw new Error('Not found');
-  if (data.slug && db.categories.some(c => c.slug === data.slug && c.id !== id)) throw new Error('Slug already exists');
-  db.categories[i] = { ...db.categories[i], ...data }; setDb(db); return db.categories[i];
+export async function createCategory(data) {
+  const res = await api.post('/admin/categories', data);
+  return res.data;
 }
-export function deleteCategory(id) {
-  const db = getDb();
-  db.categories = db.categories.filter(c => c.id !== id);
-  db.story_categories = db.story_categories.filter(sc => sc.category_id !== id);
-  setDb(db);
+export async function updateCategory(id, data) {
+  const res = await api.put(`/admin/categories/${id}`, data);
+  return res.data;
+}
+export async function deleteCategory(id) {
+  const res = await api.delete(`/admin/categories/${id}`);
+  return res.data;
 }
 
 // ===== STORIES =====
-export function listStories({ q, categoryId, status, author, sortBy='updatedAt', order='desc', page=1, pageSize=12 }) {
-  const db = getDb();
-  let arr = [...db.stories];
-  if (q) arr = arr.filter(s => s.title.toLowerCase().includes(q.toLowerCase()));
-  if (status) arr = arr.filter(s => s.status === status);
-  if (author) arr = arr.filter(s => s.author?.toLowerCase().includes(author.toLowerCase()));
-  if (categoryId) {
-    const storyIds = new Set(db.story_categories.filter(sc => sc.category_id === categoryId).map(x => x.story_id));
-    arr = arr.filter(s => storyIds.has(s.id));
+export async function listStories({ q, categoryId, status, author, sortBy='updatedAt', order='desc', page=1, pageSize=12 }) {
+  const params = { q, categoryId, status, author, sortBy, order, page, pageSize };
+  try {
+    const res = await api.get('/stories', { params });
+    const items = res.data.content || res.data.items || res.data || [];
+    return {
+      items: items.map(mapStory),
+      total: res.data.totalElements || res.data.total || items.length,
+      page: res.data.number != null ? res.data.number + 1 : page,
+      pageSize
+    };
+  } catch (e) {
+    return { items: [], total: 0, page, pageSize };
   }
-  arr.sort((a,b)=>{
-    const vA = a[sortBy] ?? 0, vB = b[sortBy] ?? 0;
-    return order === 'asc' ? vA - vB : vB - vA;
-  });
-  const total = arr.length;
-  const start = (page-1)*pageSize;
-  const items = arr.slice(start, start+pageSize);
-  return { items, total, page, pageSize };
 }
-export function getStory(storyId) {
-  const db = getDb();
-  const story = db.stories.find(s => s.id === storyId);
-  if (!story) throw new Error('Story not found');
-  const cats = db.story_categories.filter(sc => sc.story_id === storyId).map(sc => db.categories.find(c => c.id === sc.category_id));
-  return { ...story, categories: cats };
+export async function getStory(storyId) {
+  const res = await api.get(`/stories/${storyId}`);
+  return mapStory(res.data);
 }
-export function createStory(data) {
-  const db = getDb();
-  const now = Date.now();
-  const s = { id: uid(), createdAt: now, updatedAt: now, ...data };
-  db.stories.push(s); setDb(db); return s;
+export async function createStory(data) {
+  const payload = { 
+    ...data, 
+    coverImage: data.coverImage || data.coverUrl,
+    categories: (data.selectedCategories || []).map(id => ({ id }))
+  };
+  const res = await api.post('/admin/stories', payload);
+  return mapStory(res.data);
 }
-export function updateStory(id, data) {
-  const db = getDb();
-  const i = db.stories.findIndex(s => s.id === id);
-  if (i < 0) throw new Error('Story not found');
-  db.stories[i] = { ...db.stories[i], ...data, updatedAt: Date.now() };
-  setDb(db); return db.stories[i];
+export async function updateStory(id, data) {
+  const payload = { 
+    ...data, 
+    coverImage: data.coverImage || data.coverUrl,
+    categories: (data.selectedCategories || []).map(id => ({ id }))
+  };
+  const res = await api.put(`/admin/stories/${id}`, payload);
+  return mapStory(res.data);
 }
-export function deleteStory(id) {
-  const db = getDb();
-  db.stories = db.stories.filter(s => s.id !== id);
-  db.chapters = db.chapters.filter(ch => ch.story_id !== id);
-  db.story_categories = db.story_categories.filter(sc => sc.story_id !== id);
-  db.comments = db.comments.filter(c => c.story_id !== id);
-  setDb(db);
+export async function deleteStory(id) {
+  const res = await api.delete(`/admin/stories/${id}`);
+  return res.data;
+}
+export async function setStoryCategories(storyId, categoryIds) {
+  return await updateStory(storyId, { selectedCategories: categoryIds });
+}
+export async function incrementViews(storyId) {
+  try {
+    await api.patch(`/stories/${storyId}/views`);
+  } catch (e) {
+    console.error('Failed to increment views', e);
+  }
 }
 
-// ===== STORY CATEGORIES (gán thể loại) =====
-export function setStoryCategories(storyId, categoryIds) {
-  const db = getDb();
-  db.story_categories = db.story_categories.filter(sc => sc.story_id !== storyId);
-  for (const cid of categoryIds) db.story_categories.push({ story_id: storyId, category_id: cid });
-  setDb(db);
-}
-export function getUserBookmarks(userId) {
-  const db = getDb();
-  const bookmarks = db.chapter_bookmarks.filter(bm => bm.user_id === userId);
-  const chapters = bookmarks.map(bm => {
-    const chapter = db.chapters.find(ch => ch.id === bm.chapter_id);
-    if (!chapter) return null;
-    const story = db.stories.find(s => s.id === chapter.story_id);
-    if (!story) return null;
+// ===== BOOKMARKS =====
+export async function getUserBookmarks(userId, { page = 1, pageSize = 10 } = {}) {
+  try {
+    const res = await api.get(`/bookmarks/user/${userId}`, { params: { page, pageSize } });
+    const items = res.data.items || [];
     
-    const storyChapters = db.chapters.filter(c => c.story_id === story.id);
-    let latestChapterNumber = null;
-    if (storyChapters.length > 0) {
-      latestChapterNumber = Math.max(...storyChapters.map(c => Number(c.chapter_number) || 0));
-    }
+    // Convert backend ChapterBookmark mapping
+    const hydrated = await Promise.all(items.map(async bm => {
+      const chapter = mapChapter(bm.chapter);
+      if (!chapter) return null;
+      
+      const storyId = chapter.story?.id || chapter.story_id || bm.storyId || bm.story_id;
+      if (!storyId) return chapter;
+      
+      const story = mapStory(chapter.story || await getStory(storyId).catch(() => null));
+      const allChaptersRes = await listChapters(storyId, { pageSize: 1, order: 'desc' });
+      const latestChapterNumber = allChaptersRes.items[0]?.chapter_number || 0;
+      
+      return { ...chapter, story, latestChapterNumber };
+    }));
     
-    return { ...chapter, story, latestChapterNumber };
-  }).filter(Boolean);
-  return chapters;
+    return {
+      items: hydrated.filter(Boolean),
+      total: res.data.total || items.length,
+      page: res.data.page || page,
+      pageSize: res.data.pageSize || pageSize
+    };
+  } catch(e) { return { items: [], total: 0, page, pageSize }; }
 }
-export function toggleChapterBookmark(userId, chapterId) {
-  const db = getDb();
-  const existing = db.chapter_bookmarks.find(bm => bm.user_id === userId && bm.chapter_id === chapterId);
-  if (existing) {
-    db.chapter_bookmarks = db.chapter_bookmarks.filter(bm => bm !== existing);
-  } else {
-    db.chapter_bookmarks.push({ user_id: userId, chapter_id: chapterId });
-  }
-  setDb(db);
-  return !existing; // true if added, false if removed
+export async function toggleChapterBookmark(userId, chapterId) {
+  const res = await api.post('/bookmarks/toggle', null, { params: { userId, chapterId }});
+  return res.data;
 }
-export function isBookmarked(userId, chapterId) {
-  const db = getDb();
-  return db.chapter_bookmarks.some(bm => bm.user_id === userId && bm.chapter_id === chapterId);
-}
-export function addBookmark(userId, chapterId) {
-  const db = getDb();
-  if (!db.chapter_bookmarks.some(bm => bm.user_id === userId && bm.chapter_id === chapterId)) {
-    db.chapter_bookmarks.push({ user_id: userId, chapter_id: chapterId });
-    setDb(db);
-  }
-}
-export function removeBookmark(userId, chapterId) {
-  const db = getDb();
-  db.chapter_bookmarks = db.chapter_bookmarks.filter(bm => !(bm.user_id === userId && bm.chapter_id === chapterId));
-  setDb(db);
+export async function isBookmarked(userId, chapterId) {
+  try {
+    const res = await api.get('/bookmarks/check', { params: { userId, chapterId }});
+    return res.data;
+  } catch(e) { return false; }
 }
 
 // ===== CHAPTERS =====
-export function listChapters(storyId, { page=1, pageSize=20, order='asc' } = {}) {
-  const db = getDb();
-  let arr = db.chapters.filter(ch => ch.story_id === storyId);
-  arr.sort((a,b)=> order==='asc' ? a.chapter_number - b.chapter_number : b.chapter_number - a.chapter_number);
-  const total = arr.length;
-  const start = (page-1)*pageSize;
-  const items = arr.slice(start, start+pageSize);
-  return { items, total, page, pageSize };
+export async function listChapters(storyId, { page=1, pageSize=20, order='asc' } = {}) {
+  try {
+    const res = await api.get(`/stories/${storyId}/chapters`, { params: { page, pageSize, order } });
+    const items = res.data.content || res.data.items || res.data || [];
+    return {
+      items: items.map(mapChapter),
+      total: res.data.totalElements || items.length,
+      page: res.data.number != null ? res.data.number + 1 : page,
+      pageSize
+    };
+  } catch(e) { return { items: [], total: 0, page, pageSize }; }
 }
-export function getChapterByNumber(storyId, chapter_number) {
-  const db = getDb();
-  const ch = db.chapters.find(c => c.story_id === storyId && c.chapter_number === Number(chapter_number));
-  if (!ch) throw new Error('Chapter not found');
-  return ch;
+export async function getChapterByNumber(storyId, chapter_number) {
+  const res = await api.get(`/stories/${storyId}/chapters/${chapter_number}`);
+  return mapChapter(res.data);
 }
-export function createChapter({ story_id, chapter_number, title, pages }) {
-  const db = getDb();
-  if (db.chapters.some(c => c.story_id === story_id && Number(c.chapter_number) === Number(chapter_number))) {
-    throw new Error('Chapter number already exists for this story');
-  }
-  const ch = { id: uid(), story_id, chapter_number: Number(chapter_number), title, pages, createdAt: Date.now() };
-  db.chapters.push(ch); setDb(db); return ch;
+export async function createChapter(data) {
+  const payload = { ...data, chapterNumber: data.chapter_number };
+  const res = await api.post(`/admin/stories/${data.story_id}/chapters`, payload);
+  return mapChapter(res.data);
 }
-export function updateChapter(id, data) {
-  const db = getDb();
-  const i = db.chapters.findIndex(c => c.id === id);
-  if (i < 0) throw new Error('Chapter not found');
-  // nếu đổi chapter_number, áp ràng buộc unique
-  if (data.chapter_number != null) {
-    const ch = db.chapters[i];
-    if (db.chapters.some(c => c.story_id === ch.story_id && Number(c.chapter_number) === Number(data.chapter_number) && c.id !== id)) {
-      throw new Error('Chapter number already exists for this story');
-    }
-  }
-  db.chapters[i] = { ...db.chapters[i], ...data }; setDb(db); return db.chapters[i];
+export async function updateChapter(id, data) {
+  const storyId = data.story_id || 1;
+  const payload = { ...data, chapterNumber: data.chapter_number };
+  const res = await api.put(`/admin/stories/${storyId}/chapters/${id}`, payload);
+  return mapChapter(res.data);
 }
-export function deleteChapter(id) {
-  const db = getDb();
-  db.chapters = db.chapters.filter(c => c.id !== id);
-  db.comments = db.comments.filter(cm => cm.chapter_id !== id);
-  db.chapter_bookmarks = db.chapter_bookmarks.filter(bm => bm.chapter_id !== id);
-  setDb(db);
+export async function deleteChapter(id, storyId = 1) {
+  const res = await api.delete(`/admin/stories/${storyId}/chapters/${id}`);
+  return res.data;
 }
 
-export function listComments({ story_id, chapter_id }) {
-  const db = getDb();
-  let arr = db.comments;
-  if (story_id) arr = arr.filter(c => c.story_id === story_id);
-  if (chapter_id) arr = arr.filter(c => c.chapter_id === chapter_id);
-  return arr.sort((a,b)=>a.createdAt - b.createdAt);
+// ===== COMMENTS =====
+export async function listComments({ story_id, chapter_id, page=1, pageSize=20 }) {
+  try {
+    const endpoint = (story_id || chapter_id) ? '/comments' : '/admin/comments';
+    const res = await api.get(endpoint, { params: { storyId: story_id, chapterId: chapter_id, page, pageSize } });
+    if (res.data && res.data.items) {
+      return {
+        ...res.data,
+        items: res.data.items.map(mapComment)
+      };
+    }
+    return { items: (res.data || []).map(mapComment), total: (res.data || []).length, page: 1, pageSize };
+  } catch(e) { return { items: [], total: 0, page: 1, pageSize }; }
 }
-export function createComment({ user_id, story_id, chapter_id, parent_id, content }) {
-  const db = getDb();
-  const cm = { id: uid(), user_id, story_id, chapter_id, parent_id: parent_id || null, content, createdAt: Date.now() };
-  db.comments.push(cm); setDb(db); return cm;
+export async function createComment(data) {
+  const request = {
+    userId: data.user_id,
+    storyId: data.story_id,
+    chapterId: data.chapter_id,
+    parentId: data.parent_id,
+    content: data.content
+  };
+  const res = await api.post('/comments', request);
+  return mapComment(res.data);
 }
-export function deleteComment(id, { requester }) {
-  const db = getDb();
-  const cm = db.comments.find(c => c.id === id);
-  if (!cm) return;
-  if (requester.role !== 'admin' && requester.id !== cm.user_id) throw new Error('Permission denied to delete');
-  
-  const idsToDelete = new Set([id]);
-  db.comments.forEach(c => { if (c.parent_id === id) idsToDelete.add(c.id); });
-  
-  db.comments = db.comments.filter(c => !idsToDelete.has(c.id)); 
-  setDb(db);
+export async function deleteComment(id, options) {
+  const res = await api.delete(`/admin/comments/${id}`);
+  return res.data;
 }

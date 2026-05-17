@@ -6,7 +6,12 @@ import Paginator from '../components/Paginator.jsx';
 
 export default function Search() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const categories = api.listCategories();
+  const [categories, setCategories] = useState([]);
+  const [result, setResult] = useState({ items: [], total: 0, page: 1, pageSize: 12 });
+
+  useEffect(() => {
+    api.listCategories().then(setCategories);
+  }, []);
 
   // Read URL params
   const currentQ = searchParams.get('q') || '';
@@ -33,6 +38,18 @@ export default function Search() {
     setOrder(currentOrder);
   }, [currentQ, currentStatus, currentCategoryId, currentSortBy, currentOrder]);
 
+  useEffect(() => {
+    api.listStories({ 
+      q: currentQ, 
+      categoryId: currentCategoryId, 
+      status: currentStatus, 
+      sortBy: currentSortBy, 
+      order: currentOrder, 
+      page: currentPage, 
+      pageSize 
+    }).then(setResult);
+  }, [currentQ, currentCategoryId, currentStatus, currentSortBy, currentOrder, currentPage]);
+
   const updateFilters = (updates) => {
     const newParams = new URLSearchParams(searchParams);
     Object.entries(updates).forEach(([k, v]) => {
@@ -46,16 +63,6 @@ export default function Search() {
     if (e) e.preventDefault();
     updateFilters({ q, status, categoryId, sortBy, order });
   };
-
-  const result = useMemo(() => api.listStories({ 
-    q: currentQ, 
-    categoryId: currentCategoryId, 
-    status: currentStatus, 
-    sortBy: currentSortBy, 
-    order: currentOrder, 
-    page: currentPage, 
-    pageSize 
-  }), [currentQ, currentCategoryId, currentStatus, currentSortBy, currentOrder, currentPage]);
 
   return (
     <div className="search-page animate-fade" style={{ padding: '40px 0', minHeight: 'calc(100vh - 200px)' }}>
@@ -93,8 +100,8 @@ export default function Search() {
               <label style={{ color: 'var(--muted)', fontSize: '13px', marginBottom: '8px', display: 'block' }}>Status</label>
               <select value={status} onChange={e => { setStatus(e.target.value); updateFilters({ status: e.target.value }); }}>
                 <option value="">All Statuses</option>
-                <option value="ongoing">Ongoing</option>
-                <option value="completed">Completed</option>
+                <option value="ONGOING">Ongoing</option>
+                <option value="COMPLETED">Completed</option>
               </select>
             </div>
             
@@ -103,6 +110,7 @@ export default function Search() {
               <select value={sortBy} onChange={e => { setSortBy(e.target.value); updateFilters({ sortBy: e.target.value }); }}>
                 <option value="updatedAt">Latest Updated</option>
                 <option value="createdAt">Newly Added</option>
+                <option value="views">Most Viewed</option>
                 <option value="title">A-Z</option>
               </select>
             </div>

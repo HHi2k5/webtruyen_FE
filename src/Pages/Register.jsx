@@ -8,13 +8,12 @@ export default function Register() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('user');
   const [error, setError] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await register({ name, email, password, role });
+      await register({ name, email, password });
       nav('/');
     } catch (err) {
       setError(err.message);
@@ -60,16 +59,7 @@ export default function Register() {
               required
             />
           </div>
-          <div className="form-group" style={{ marginBottom: '24px' }}>
-            <label>Account Role</label>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-            >
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
-            </select>
-          </div>
+
           <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px', fontSize: '15px' }}>
             Register Account
           </button>
